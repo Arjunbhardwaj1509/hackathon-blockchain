@@ -1,71 +1,117 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
 import type { NextPage } from "next";
-import { useAccount } from "wagmi";
-import { BugAntIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
-import { Address } from "~~/components/scaffold-eth";
+import { parseEther } from "viem";
+import { AddressInput } from "~~/components/scaffold-eth";
+// ---
+// ⬇️ HERE ARE THE CORRECTED HOOK NAMES ⬇️
+// ---
+import { useScaffoldReadContract, useScaffoldWriteContract } from "~~/hooks/scaffold-eth";
 
 const Home: NextPage = () => {
-  const { address: connectedAddress } = useAccount();
+  const [workerAddress, setWorkerAddress] = useState("");
+  const [jobAmount, setJobAmount] = useState("");
+  const [jobId, setJobId] = useState("");
+
+  // ---
+  // ⬇️ CORRECTED READ HOOK ⬇️
+  // ---
+  const { data: jobCounter } = useScaffoldReadContract({
+    contractName: "InstaPay",
+    functionName: "jobCounter",
+    watch: true,
+  });
+
+  // ---
+  // ⬇️ CORRECTED WRITE HOOK (for createAndFundJob) ⬇️
+  // This hook pre-configures the write function
+  // ---
+  const { writeContractAsync: createJob, isPending: isCreating } = useScaffoldWriteContract("InstaPay");
+
+  // ---
+  // ⬇️ CORRECTED WRITE HOOK (for releasePayment) ⬇️
+  // ---
+  const { writeContractAsync: releasePayment, isPending: isReleasing } = useScaffoldWriteContract("InstaPay");
+
+  const handleCreateJob = async () => {
+    try {
+      await createJob({
+        functionName: "createAndFundJob",
+        args: [workerAddress],
+        value: jobAmount ? parseEther(jobAmount) : 0n,
+      });
+    } catch (e) {
+      console.error("Error creating job:", e);
+    }
+  };
+
+  const handleReleasePayment = async () => {
+    try {
+      await releasePayment({
+        functionName: "releasePayment",
+        args: [BigInt(jobId || 0)],
+      });
+    } catch (e) {
+      console.error("Error releasing payment:", e);
+    }
+  };
 
   return (
-    <>
-      <div className="flex items-center flex-col grow pt-10">
-        <div className="px-5">
-          <h1 className="text-center">
-            <span className="block text-2xl mb-2">Welcome to</span>
-            <span className="block text-4xl font-bold">Scaffold-ETH 2</span>
-          </h1>
-          <div className="flex justify-center items-center space-x-2 flex-col">
-            <p className="my-2 font-medium">Connected Address:</p>
-            <Address address={connectedAddress} />
-          </div>
+    <div className="flex flex-col items-center pt-10">
+      <h1 className="text-4xl font-bold">InstaPay Demo 💸</h1>
+      <p className="text-lg">Instant Payments. No 14-day delays.</p>
 
-          <p className="text-center text-lg">
-            Get started by editing{" "}
-            <code className="italic bg-base-300 text-base font-bold max-w-full break-words break-all inline-block">
-              packages/nextjs/app/page.tsx
-            </code>
-          </p>
-          <p className="text-center text-lg">
-            Edit your smart contract{" "}
-            <code className="italic bg-base-300 text-base font-bold max-w-full break-words break-all inline-block">
-              YourContract.sol
-            </code>{" "}
-            in{" "}
-            <code className="italic bg-base-300 text-base font-bold max-w-full break-words break-all inline-block">
-              packages/hardhat/contracts
-            </code>
-          </p>
+      <div className="text-2xl mt-4">
+        Total Jobs Created: <span className="font-bold text-green-500">{jobCounter?.toString() || 0}</span>
+      </div>
+
+      <div className="flex gap-10 mt-10">
+        {/* HIRER CARD */}
+        <div className="card w-96 bg-base-100 shadow-xl border border-gray-200">
+          <div className="card-body">
+            <h2 className="card-title">1. Create & Fund Job (Hirer)</h2>
+            <label className="label">Worker&apos;s Wallet Address:</label>
+            <AddressInput value={workerAddress} onChange={setWorkerAddress} />
+            <label className="label">Amount (in ETH):</label>
+            <input
+              type="text"
+              placeholder="e.g ., 0.1"
+              className="input input-bordered w-full"
+              value={jobAmount}
+              onChange={e => setJobAmount(e.target.value)}
+            />
+            {/* ---
+            // ⬇️ UPDATED BUTTON ⬇️
+            // --- */}
+            <button className="btn btn-primary mt-2" onClick={handleCreateJob} disabled={isCreating}>
+              {isCreating ? <span className="loading loading-spinner"></span> : "Create & Fund"}
+            </button>
+          </div>
         </div>
 
-        <div className="grow bg-base-300 w-full mt-16 px-8 py-12">
-          <div className="flex justify-center items-center gap-12 flex-col md:flex-row">
-            <div className="flex flex-col bg-base-100 px-10 py-10 text-center items-center max-w-xs rounded-3xl">
-              <BugAntIcon className="h-8 w-8 fill-secondary" />
-              <p>
-                Tinker with your smart contract using the{" "}
-                <Link href="/debug" passHref className="link">
-                  Debug Contracts
-                </Link>{" "}
-                tab.
-              </p>
-            </div>
-            <div className="flex flex-col bg-base-100 px-10 py-10 text-center items-center max-w-xs rounded-3xl">
-              <MagnifyingGlassIcon className="h-8 w-8 fill-secondary" />
-              <p>
-                Explore your local transactions with the{" "}
-                <Link href="/blockexplorer" passHref className="link">
-                  Block Explorer
-                </Link>{" "}
-                tab.
-              </p>
-            </div>
+        {/* PAYMENT CARD */}
+        <div className="card w-96 bg-base-100 shadow-xl border border-gray-200">
+          <div className="card-body">
+            <h2 className="card-title">2. Release Payment (Hirer)</h2>
+            <label className="label">Job ID to Pay:</label>
+            <input
+              type="text"
+              placeholder="e.g., 1"
+              className="input input-bordered w-full"
+              value={jobId}
+              onChange={e => setJobId(e.target.value)}
+            />
+            {/* ---
+            // ⬇️ UPDATED BUTTON ⬇️
+            // --- */}
+            <button className="btn btn-success mt-2" onClick={handleReleasePayment} disabled={isReleasing}>
+              {isReleasing ? <span className="loading loading-spinner"></span> : "Release Payment"}
+            </button>
           </div>
         </div>
       </div>
-    </>
+    </div>
   );
 };
 
