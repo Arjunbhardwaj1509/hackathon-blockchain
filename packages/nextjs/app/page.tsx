@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { NextPage } from "next";
 import { parseEther } from "viem";
+import { useAccount } from "wagmi";
 import { AddressInput } from "~~/components/scaffold-eth";
 // ---
 // ⬇️ HERE ARE THE CORRECTED HOOK NAMES ⬇️
@@ -16,6 +17,15 @@ const Home: NextPage = () => {
   const [isAnimating, setIsAnimating] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [particles, setParticles] = useState<Array<{ id: number; x: number; y: number; delay: number }>>([]);
+
+  // --- NEW STATE ---
+  // Stores the address that successfully created the *last* job
+  const [jobCreatedByAddress, setJobCreatedByAddress] = useState<string | null>(null);
+  const [lastCreatedJobId, setLastCreatedJobId] = useState<string | null>(null);
+
+  // --- WAGMI HOOK ---
+  // Gets the currently connected wallet address
+  const { address: connectedAddress } = useAccount();
 
   // ---
   // ⬇️ CORRECTED READ HOOK ⬇️
@@ -52,33 +62,116 @@ const Home: NextPage = () => {
   }, []);
 
   const handleCreateJob = async () => {
+    // Store the address *before* sending the transaction
+    const addressCreatingJob = connectedAddress;
+    if (!addressCreatingJob) {
+      alert("Wallet not connected!");
+      return;
+    }
+
+    // Validate inputs
+    if (!workerAddress) {
+      alert("Please enter a worker address!");
+      return;
+    }
+    if (!jobAmount || parseFloat(jobAmount) <= 0) {
+      alert("Please enter a valid amount greater than 0!");
+      return;
+    }
+
     setIsAnimating(true);
     try {
-      await createJob({
-        functionName: "createAndFundJob",
-        args: [workerAddress],
-        value: jobAmount ? parseEther(jobAmount) : 0n,
-      });
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
+      await createJob(
+        {
+          functionName: "createAndFundJob",
+          args: [workerAddress],
+          value: jobAmount ? parseEther(jobAmount) : 0n,
+        },
+        // --- NEW: Add callbacks ---
+        {
+          // This runs *after* the transaction is successful
+          onSuccess: async data => {
+            console.log("Transaction successful:", data);
+            // Save the address that *successfully* created this job
+            setJobCreatedByAddress(addressCreatingJob);
+            // We assume the new job ID is the current counter
+            const newJobId = jobCounter ? (jobCounter + 1n).toString() : "1";
+            setLastCreatedJobId(newJobId);
+            setJobId(newJobId); // Automatically fill the Job ID for release
+            setShowSuccess(true);
+            setTimeout(() => setShowSuccess(false), 3000);
+            alert(
+              `🎉 Job ${newJobId} created successfully!\n\nCreated by: ${addressCreatingJob}\nAmount: ${jobAmount} ETH\nWorker: ${workerAddress}`,
+            );
+          },
+          onError(error) {
+            console.error("Transaction error:", error);
+            alert(`❌ Error creating job: ${error.message}`);
+          },
+        },
+      );
     } catch (e) {
-      console.error("Error creating job:", e);
+      console.error("Error setting up create job transaction:", e);
+      alert(`❌ Setup Error: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsAnimating(false);
     }
   };
 
   const handleReleasePayment = async () => {
+    // --- IMPROVED CHECK ---
+    if (!connectedAddress) {
+      alert("Wallet not connected!");
+      return;
+    }
+
+    // Check if job ID is provided
+    if (!jobId || jobId === "0") {
+      alert("Please enter a valid Job ID to release payment.");
+      return;
+    }
+
+    // More flexible validation - only check if we have stored creator info
+    if (jobCreatedByAddress && lastCreatedJobId === jobId) {
+      if (connectedAddress.toLowerCase() !== jobCreatedByAddress.toLowerCase()) {
+        const proceed = confirm(
+          `⚠️ Wallet Mismatch Warning!\n\n` +
+            `This job (#${lastCreatedJobId}) was created by: ${jobCreatedByAddress}\n` +
+            `You are currently connected as: ${connectedAddress}\n\n` +
+            `Do you want to proceed anyway? This might fail if you're not the job creator.`,
+        );
+        if (!proceed) {
+          return;
+        }
+      }
+    }
+
     setIsAnimating(true);
     try {
-      await releasePayment({
-        functionName: "releasePayment",
-        args: [BigInt(jobId || 0)],
-      });
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
+      await releasePayment(
+        {
+          functionName: "releasePayment",
+          args: [BigInt(jobId || 0)],
+        },
+        {
+          onSuccess: async data => {
+            console.log("Payment released successfully:", data);
+            // Reset the creator address after successful payment
+            setJobCreatedByAddress(null);
+            setLastCreatedJobId(null);
+            setShowSuccess(true);
+            setTimeout(() => setShowSuccess(false), 3000);
+            alert(`Payment for Job #${jobId} released successfully!`);
+          },
+          onError(error) {
+            console.error("Transaction error:", error);
+            alert(`Error releasing payment: ${error.message}`);
+          },
+        },
+      );
     } catch (e) {
       console.error("Error releasing payment:", e);
+      alert(`Error releasing payment: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsAnimating(false);
     }
@@ -151,6 +244,51 @@ const Home: NextPage = () => {
               <div className="text-sm text-gray-500 dark:text-gray-400">Total Paid</div>
             </div>
           </div>
+
+          {/* --- NEW: Display Hirer Info --- */}
+          {jobCreatedByAddress && lastCreatedJobId === jobId && (
+            <div className="mt-6 animate-slide-up">
+              <div className="bg-gradient-to-r from-blue-100 to-purple-100 dark:from-blue-900/30 dark:to-purple-900/30 border border-blue-300 dark:border-blue-700 rounded-2xl p-6 shadow-lg">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-10 h-10 bg-blue-500 rounded-full flex items-center justify-center animate-pulse">
+                    <span className="text-white text-lg">👤</span>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-blue-800 dark:text-blue-200">Job Creator Info</h3>
+                    <p className="text-sm text-blue-600 dark:text-blue-300">Job #{lastCreatedJobId} was created by:</p>
+                  </div>
+                </div>
+                <div className="bg-white dark:bg-gray-800 rounded-xl p-4 border border-blue-200 dark:border-blue-700">
+                  <p className="text-sm font-mono text-gray-700 dark:text-gray-300 break-all">{jobCreatedByAddress}</p>
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-sm text-blue-700 dark:text-blue-300">
+                  <span className="animate-ping">⚠️</span>
+                  <span>Ensure this matches your current wallet before releasing payment.</span>
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    onClick={() => {
+                      setJobCreatedByAddress(null);
+                      setLastCreatedJobId(null);
+                      setJobId("");
+                    }}
+                    className="btn btn-sm btn-outline btn-warning"
+                  >
+                    Clear Session
+                  </button>
+                  <button
+                    onClick={() => {
+                      window.location.reload();
+                    }}
+                    className="btn btn-sm btn-outline btn-info"
+                  >
+                    Reload Page
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* --- END NEW --- */}
         </div>
 
         {/* Main Content */}
